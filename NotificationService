@@ -1,0 +1,233 @@
+<?php
+// Database connection constants - modify these for your environment
+define('DB_HOST', 'localhost');
+define('DB_NAME', 'nhs_appointment');
+define('DB_USER', 'root');
+define('DB_PASS', '');
+
+// Include the database class
+require_once 'db.php';
+
+// Create global PDO connection that will be used by NotificationService
+$db = new Database();
+$pdo = $db->getConnection();
+
+// Include NotificationService class
+require_once 'paste.txt'; // Your NotificationService file
+
+// Create a simple function to simulate database data for testing
+function setupTestData($pdo) {
+    echo "<h2>Setting up test data...</h2>";
+    
+    try {
+        // Create test tables if they don't exist
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS patients (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                first_name VARCHAR(50) NOT NULL,
+                last_name VARCHAR(50) NOT NULL,
+                email VARCHAR(100) NOT NULL,
+                phone VARCHAR(20),
+                notify_by_email BOOLEAN DEFAULT TRUE,
+                notify_by_sms BOOLEAN DEFAULT TRUE
+            )
+        ");
+
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS doctors (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                first_name VARCHAR(50) NOT NULL,
+                last_name VARCHAR(50) NOT NULL,
+                email VARCHAR(100) NOT NULL,
+                phone VARCHAR(20),
+                notify_by_email BOOLEAN DEFAULT TRUE,
+                notify_by_sms BOOLEAN DEFAULT FALSE
+            )
+        ");
+
+        $pdo->exec("
+            CREATE TABLE IF NOT EXISTS appointments (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+                patient_id INT NOT NULL,
+                doctor_id INT NOT NULL,
+                appointment_time DATETIME NOT NULL,
+                status VARCHAR(20) DEFAULT 'scheduled'
+            )
+        ");
+
+        // Insert test data
+        // 1. Add a test patient
+        $checkPatient = $pdo->query("SELECT id FROM patients WHERE email = 'patient@example.com' LIMIT 1");
+        if ($checkPatient->rowCount() == 0) {
+            $pdo->exec("
+                INSERT INTO patients (first_name, last_name, email, phone, notify_by_email, notify_by_sms)
+                VALUES ('John', 'Doe', 'patient@example.com', '+447700900000', TRUE, TRUE)
+            ");
+            echo "<p>✅ Added test patient: John Doe</p>";
+        } else {
+            echo "<p>ℹ️ Test patient already exists</p>";
+        }
+
+        // 2. Add a test doctor
+        $checkDoctor = $pdo->query("SELECT id FROM doctors WHERE email = 'doctor@example.com' LIMIT 1");
+        if ($checkDoctor->rowCount() == 0) {
+            $pdo->exec("
+                INSERT INTO doctors (first_name, last_name, email, phone, notify_by_email, notify_by_sms)
+                VALUES ('Jane', 'Smith', 'doctor@example.com', '+447700900001', TRUE, FALSE)
+            ");
+            echo "<p>✅ Added test doctor: Dr. Jane Smith</p>";
+        } else {
+            echo "<p>ℹ️ Test doctor already exists</p>";
+        }
+
+        // 3. Add a test appointment
+        $checkAppointment = $pdo->query("SELECT id FROM appointments LIMIT 1");
+        if ($checkAppointment->rowCount() == 0) {
+            $appointmentTime = date('Y-m-d H:i:s', strtotime('+2 days 10:00:00'));
+            $pdo->exec("
+                INSERT INTO appointments (patient_id, doctor_id, appointment_time)
+                VALUES (1, 1, '$appointmentTime')
+            ");
+            echo "<p>✅ Added test appointment for " . date('l, F j, Y \a\t h:i A', strtotime($appointmentTime)) . "</p>";
+        } else {
+            echo "<p>ℹ️ Test appointment already exists</p>";
+        }
+        
+        return true;
+    } catch (PDOException $e) {
+        echo "<p>❌ Error setting up test data: " . $e->getMessage() . "</p>";
+        return false;
+    }
+}
+
+// Function to simulate notification sending and display the outputs
+function testNotificationService($notificationService) {
+    echo "<h2>Testing NotificationService</h2>";
+    
+    // Override the private methods with public test methods for demonstration
+    class TestNotificationService extends NotificationService {
+        // Make methods public for testing
+        public function testSendEmail($to, $subject, $body) {
+            echo "<div class='email-notification'>";
+            echo "<h3>📧 Email would be sent to: $to</h3>";
+            echo "<p><strong>Subject:</strong> $subject</p>";
+            echo "<p><strong>Body:</strong></p>";
+            echo "<div class='email-body'>" . nl2br($body) . "</div>";
+            echo "</div>";
+            return true;
+        }
+        
+        public function testSendSMS($to, $message) {
+            echo "<div class='sms-notification'>";
+            echo "<h3>📱 SMS would be sent to: $to</h3>";
+            echo "<p><strong>Message:</strong> $message</p>";
+            echo "</div>";
+            return true;
+        }
+        
+        // Override private methods to use our test methods instead
+        protected function sendEmail($to, $subject, $body) {
+            return $this->testSendEmail($to, $subject, $body);
+        }
+        
+        protected function sendSMS($to, $message) {
+            return $this->testSendSMS($to, $message);
+        }
+        
+        // Public method to display notification preferences
+        public function displayNotificationPreferences($userId, $userType) {
+            $prefs = $this->getNotificationPreferences($userId, $userType);
+            echo "<div class='preferences'>";
+            echo "<h3>🔔 Notification Preferences for $userType ID: $userId</h3>";
+            echo "<ul>";
+            echo "<li>Email: " . $prefs['email'] . " (Enabled: " . ($prefs['notify_by_email'] ? "Yes" : "No") . ")</li>";
+            echo "<li>SMS: " . ($prefs['phone'] ? $prefs['phone'] : "Not provided") . " (Enabled: " . ($prefs['notify_by_sms'] ? "Yes" : "No") . ")</li>";
+            echo "</ul>";
+            echo "</div>";
+        }
+    }
+    
+    // Create test notification service
+    $testService = new TestNotificationService();
+    
+    // Get appointment ID from the database
+    global $pdo;
+    $stmt = $pdo->query("SELECT id FROM appointments ORDER BY id LIMIT 1");
+    $appointment = $stmt->fetch(PDO::FETCH_ASSOC);
+    
+    if ($appointment) {
+        $appointmentId = $appointment['id'];
+        
+        // Display notification preferences
+        echo "<h3>Notification Preferences</h3>";
+        $testService->displayNotificationPreferences(1, 'patient');
+        $testService->displayNotificationPreferences(1, 'doctor');
+        
+        // Test appointment creation notification
+        echo "<h3>Test: Appointment Creation Notification</h3>";
+        $testService->sendAppointmentNotification($appointmentId, 'created');
+        
+        // Test appointment cancellation notification
+        echo "<h3>Test: Appointment Cancellation Notification</h3>";
+        $testService->sendAppointmentNotification($appointmentId, 'cancelled');
+        
+        return true;
+    } else {
+        echo "<p>❌ No test appointment found</p>";
+        return false;
+    }
+}
+
+// Add some basic styling
+echo "
+<style>
+    body {
+        font-family: Arial, sans-serif;
+        max-width: 800px;
+        margin: 0 auto;
+        padding: 20px;
+        line-height: 1.6;
+    }
+    h1, h2, h3 {
+        color: #005eb8; /* NHS Blue */
+    }
+    .email-notification, .sms-notification, .preferences {
+        background-color: #f8f8f8;
+        border: 1px solid #ddd;
+        padding: 15px;
+        margin-bottom: 20px;
+        border-radius: 5px;
+    }
+    .email-body {
+        background-color: white;
+        border: 1px solid #eee;
+        padding: 10px;
+        margin-top: 10px;
+    }
+    .sms-notification {
+        background-color: #e6f7ff;
+    }
+    .preferences {
+        background-color: #f0f7f0;
+    }
+</style>
+";
+
+// Main execution
+echo "<h1>NHS Appointment Notification System - Test</h1>";
+
+try {
+    // Setup test data
+    $dataSetup = setupTestData($pdo);
+    
+    if ($dataSetup) {
+        // Create notification service instance
+        $notificationService = new NotificationService();
+        
+        // Test notification service
+        testNotificationService($notificationService);
+    }
+} catch (Exception $e) {
+    echo "<p>❌ Error: " . $e->getMessage() . "</p>";
+}
+?>
